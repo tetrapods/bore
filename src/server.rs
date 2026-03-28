@@ -1,6 +1,7 @@
 //! Server implementation for the `bore` service.
 
-use std::{io, net::SocketAddr, ops::RangeInclusive, sync::Arc, time::Duration};
+use std::net::{IpAddr, Ipv4Addr};
+use std::{io, ops::RangeInclusive, sync::Arc, time::Duration};
 
 use anyhow::Result;
 use dashmap::DashMap;
@@ -11,7 +12,7 @@ use tracing::{info, info_span, warn, Instrument};
 use uuid::Uuid;
 
 use crate::auth::Authenticator;
-use crate::shared::{proxy, ClientMessage, Delimited, ServerMessage, CONTROL_PORT};
+use crate::shared::{ClientMessage, Delimited, ServerMessage, CONTROL_PORT};
 
 /// State structure for the server.
 pub struct Server {
@@ -23,6 +24,12 @@ pub struct Server {
 
     /// Concurrent map of IDs to incoming connections.
     conns: Arc<DashMap<Uuid, TcpStream>>,
+
+    /// IP address where the control server will bind to.
+    bind_addr: IpAddr,
+
+    /// IP address where tunnels will listen on.
+    bind_tunnels: IpAddr,
 }
 
 impl Server {
@@ -33,15 +40,26 @@ impl Server {
             port_range,
             conns: Arc::new(DashMap::new()),
             auth: secret.map(Authenticator::new),
+            bind_addr: IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+            bind_tunnels: IpAddr::V4(Ipv4Addr::UNSPECIFIED),
         }
+    }
+
+    /// Set the IP address where tunnels will listen on.
+    pub fn set_bind_addr(&mut self, bind_addr: IpAddr) {
+        self.bind_addr = bind_addr;
+    }
+
+    /// Set the IP address where the control server will bind to.
+    pub fn set_bind_tunnels(&mut self, bind_tunnels: IpAddr) {
+        self.bind_tunnels = bind_tunnels;
     }
 
     /// Start the server, listening for new connections.
     pub async fn listen(self) -> Result<()> {
         let this = Arc::new(self);
-        let addr = SocketAddr::from(([0, 0, 0, 0], CONTROL_PORT));
-        let listener = TcpListener::bind(&addr).await?;
-        info!(?addr, "server listening");
+        let listener = TcpListener::bind((this.bind_addr, CONTROL_PORT)).await?;
+        info!(addr = ?this.bind_addr, "server listening");
 
         loop {
             let (stream, addr) = listener.accept().await?;
@@ -62,7 +80,7 @@ impl Server {
 
     async fn create_listener(&self, port: u16) -> Result<TcpListener, &'static str> {
         let try_bind = |port: u16| async move {
-            TcpListener::bind(("0.0.0.0", port))
+            TcpListener::bind((self.bind_tunnels, port))
                 .await
                 .map_err(|err| match err.kind() {
                     io::ErrorKind::AddrInUse => "port already in use",
@@ -98,6 +116,7 @@ impl Server {
     }
 
     async fn handle_connection(&self, stream: TcpStream) -> Result<()> {
+        let peer_addr = stream.peer_addr().unwrap().to_string();
         let mut stream = Delimited::new(stream);
         if let Some(auth) = &self.auth {
             if let Err(err) = auth.server_handshake(&mut stream).await {
@@ -120,13 +139,15 @@ impl Server {
                         return Ok(());
                     }
                 };
+                let host = listener.local_addr()?.ip();
                 let port = listener.local_addr()?.port();
-                info!(?port, "new client");
+                info!(?host, ?port, "new client");
                 stream.send(ServerMessage::Hello(port)).await?;
 
                 loop {
                     if stream.send(ServerMessage::Heartbeat).await.is_err() {
                         // Assume that the TCP connection has been dropped.
+                        info!(peer_addr, "connection dropped after heartbeat timeout");
                         return Ok(());
                     }
                     const TIMEOUT: Duration = Duration::from_millis(500);
@@ -153,10 +174,10 @@ impl Server {
                 info!(%id, "forwarding connection");
                 match self.conns.remove(&id) {
                     Some((_, mut stream2)) => {
-                        let parts = stream.into_parts();
+                        let mut parts = stream.into_parts();
                         debug_assert!(parts.write_buf.is_empty(), "framed write buffer not empty");
                         stream2.write_all(&parts.read_buf).await?;
-                        proxy(parts.io, stream2).await?
+                        tokio::io::copy_bidirectional(&mut parts.io, &mut stream2).await?;
                     }
                     None => warn!(%id, "missing connection"),
                 }

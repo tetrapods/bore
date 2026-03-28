@@ -23,19 +23,47 @@ Similar to [localtunnel](https://github.com/localtunnel/localtunnel) and [ngrok]
 
 ## Installation
 
-If you're on macOS, `bore` is packaged as a Homebrew core formula.
+### macOS
+
+`bore` is packaged as a Homebrew core formula.
 
 ```shell
 brew install bore-cli
 ```
 
+### Linux
+
+#### Arch Linux
+
+`bore` is available in the AUR as `bore`.
+
+```shell
+yay -S bore # or your favorite AUR helper
+```
+
+#### Gentoo Linux
+
+`bore` is available in the [gentoo-zh](https://github.com/microcai/gentoo-zh) overlay.
+
+```shell
+sudo eselect repository enable gentoo-zh
+sudo emerge --sync gentoo-zh
+sudo emerge net-proxy/bore
+```
+
+### Binary Distribution
+
 Otherwise, the easiest way to install bore is from prebuilt binaries. These are available on the [releases page](https://github.com/ekzhang/bore/releases) for macOS, Windows, and Linux. Just unzip the appropriate file for your platform and move the `bore` executable into a folder on your PATH.
+
+### Cargo
 
 You also can build `bore` from source using [Cargo](https://doc.rust-lang.org/cargo/), the Rust package manager. This command installs the `bore` binary at a user-accessible path.
 
 ```shell
 cargo install bore-cli
 ```
+
+### Docker
 
 We also publish versioned Docker images for each release. The image is built for an AMD 64-bit architecture. They're tagged with the specific version and allow you to run the statically-linked `bore` binary from a minimal "scratch" container.
 
@@ -65,14 +93,14 @@ Starts a local proxy to the remote server
 Usage: bore local [OPTIONS] --to <TO> <LOCAL_PORT>
 
 Arguments:
-  <LOCAL_PORT>  The local port to expose
+  <LOCAL_PORT>  The local port to expose [env: BORE_LOCAL_PORT=]
 
 Options:
   -l, --local-host <HOST>  The local host to expose [default: localhost]
   -t, --to <TO>            Address of the remote server to expose local ports to [env: BORE_SERVER=]
   -p, --port <PORT>        Optional port on the remote server to select [default: 0]
   -s, --secret <SECRET>    Optional secret for authentication [env: BORE_SECRET]
-  -h, --help               Print help information
+  -h, --help               Print help
 ```
 
 ### Self-Hosting
@@ -85,6 +113,8 @@ bore server
 
 That's all it takes! After the server starts running at a given address, you can then update the `bore local` command with option `--to <ADDRESS>` to forward a local port to this remote server.
 
+It's possible to specify different IP addresses for the control server and for the tunnels. This setup is useful for cases where you might want the control server to be on a private network while allowing tunnel connections over a public interface, or vice versa.
+
 The full options for the `bore server` command are shown below.
 
 ```shell
@@ -93,10 +123,12 @@ Runs the remote proxy server
 Usage: bore server [OPTIONS]
 
 Options:
-      --min-port <MIN_PORT>  Minimum accepted TCP port number [default: 1024, env: BORE_MIN_PORT]
-      --max-port <MAX_PORT>  Maximum accepted TCP port number [default: 65535, env: BORE_MAX_PORT]
-  -s, --secret <SECRET>      Optional secret for authentication [env: BORE_SECRET]
-  -h, --help                 Print help information
+      --min-port <MIN_PORT>          Minimum accepted TCP port number [env: BORE_MIN_PORT=] [default: 1024]
+      --max-port <MAX_PORT>          Maximum accepted TCP port number [env: BORE_MAX_PORT=] [default: 65535]
+  -s, --secret <SECRET>              Optional secret for authentication [env: BORE_SECRET]
+      --bind-addr <BIND_ADDR>        IP address to bind to, clients must reach this [default: 0.0.0.0]
+      --bind-tunnels <BIND_TUNNELS>  IP address where tunnels will listen on, defaults to --bind-addr
+  -h, --help                         Print help
 ```
 
 ## Protocol
